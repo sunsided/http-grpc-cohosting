@@ -1,14 +1,18 @@
+mod certs;
 mod hybrid;
 
+use crate::certs::Acceptor;
 use crate::hybrid::{hybrid, HybridMakeService};
 use axum::routing::IntoMakeService;
 use axum::Router;
+use hyper::server::conn::AddrIncoming;
 use hyper::Server;
 use log::{error, info, warn};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::str::FromStr;
+use tls_listener::TlsListener;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
 use tokio::task::JoinSet;
@@ -82,12 +86,21 @@ async fn main() -> ExitCode {
     // Bind second hyper HTTP server.
     let socket_addr =
         SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
-    let server_b = create_hyper_server(service, socket_addr, &shutdown_tx);
+    let server_b = create_hyper_server(service.clone(), socket_addr, &shutdown_tx);
+
+    // Bind third hyper HTTP server (using TLS).
+    let socket_addr =
+        SocketAddr::from_str("127.0.0.1:36850").expect("failed to parse socket address");
+    let listener = tls_listener::builder(certs::tls_acceptor())
+        .max_handshakes(10)
+        .listen(AddrIncoming::bind(&socket_addr).unwrap());
+    let server_c = create_hyper_server_tls(service, listener, &shutdown_tx);
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
     futures.spawn(server_a);
     futures.spawn(server_b);
+    futures.spawn(server_c);
 
     // Wait for all servers to stop.
     info!("Starting servers");
@@ -132,6 +145,22 @@ fn create_hyper_server(
             return ExitCode::from(exitcode::NOPERM as u8);
         })
         .expect("failed to bind first Hyper server")
+        .serve(service)
+        .with_graceful_shutdown({
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            async move {
+                shutdown_rx.recv().await.ok();
+                info!("Graceful shutdown initiated on first Hyper server")
+            }
+        })
+}
+
+fn create_hyper_server_tls(
+    service: HybridMakeService<IntoMakeService<Router>, Routes>,
+    listener: TlsListener<AddrIncoming, Acceptor>,
+    shutdown_tx: &Sender<()>,
+) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+    Server::builder(listener)
         .serve(service)
         .with_graceful_shutdown({
             let mut shutdown_rx = shutdown_tx.subscribe();
