@@ -55,27 +55,11 @@ async fn main() -> ExitCode {
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
     register_shutdown_handler(shutdown_tx.clone());
 
-    // Build the gRPC service.
-    let grpc_service = MyGrpcService::default();
+    // Build the web and gRPC service.
+    let grpc_service = build_grpc_service();
+    let axum_make_svc = build_web_service();
 
-    // Build the gRPC reflections service
-    let grpc_reflection_service = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(proto::FILE_DESCRIPTOR_SET)
-        .build()
-        .unwrap();
-
-    let grpc_service = tonic::transport::Server::builder()
-        .add_service(grpc_reflection_service)
-        .add_service(proto::your_service_server::YourServiceServer::new(
-            grpc_service,
-        ))
-        .into_service();
-
-    // Build an Axum router.
-    let app = Router::new().route("/", axum::routing::get(root_handler));
-    let axum_make_svc = app.into_make_service();
-
-    // Build the hybrid service.
+    // Combine web and gRPC into a hybrid service.
     let service = hybrid(axum_make_svc, grpc_service);
 
     // Bind first hyper HTTP server.
@@ -123,6 +107,28 @@ async fn main() -> ExitCode {
 
     info!("Shutting down application");
     ExitCode::SUCCESS
+}
+
+fn build_web_service() -> IntoMakeService<Router> {
+    let app = Router::new().route("/", axum::routing::get(root_handler));
+    app.into_make_service()
+}
+
+fn build_grpc_service() -> Routes {
+    let grpc_service = MyGrpcService::default();
+
+    // Build the gRPC reflections service
+    let grpc_reflection_service = tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(proto::FILE_DESCRIPTOR_SET)
+        .build()
+        .unwrap();
+
+    tonic::transport::Server::builder()
+        .add_service(grpc_reflection_service)
+        .add_service(proto::your_service_server::YourServiceServer::new(
+            grpc_service,
+        ))
+        .into_service()
 }
 
 fn create_hyper_server(
