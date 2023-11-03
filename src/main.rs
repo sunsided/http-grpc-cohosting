@@ -1,3 +1,6 @@
+mod hybrid;
+
+use crate::hybrid::hybrid;
 use axum::Router;
 use futures::TryFutureExt;
 use hyper::Server;
@@ -7,7 +10,6 @@ use std::process::ExitCode;
 use std::str::FromStr;
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
-use tower::ServiceBuilder;
 
 mod proto {
     tonic::include_proto!("example");
@@ -55,21 +57,19 @@ async fn main() -> ExitCode {
         .build()
         .unwrap();
 
-    let grpc_addr = "127.0.0.1:50052".parse().unwrap();
-    let grpc = tonic::transport::Server::builder()
+    let grpc_service = tonic::transport::Server::builder()
         .add_service(grpc_reflection_service)
         .add_service(proto::your_service_server::YourServiceServer::new(
             grpc_service,
         ))
-        .serve(grpc_addr)
-        .map_err(|e| ServerError::TonicError(e));
+        .into_service();
 
     // Build an Axum router.
     let app = Router::new().route("/", axum::routing::get(root_handler));
+    let axum_make_svc = app.into_make_service();
 
-    // Convert into a Tower service.
-    let make_svc = app.into_make_service();
-    let service_builder = ServiceBuilder::new().service(make_svc);
+    // Build the hybrid service.
+    let service = hybrid(axum_make_svc, grpc_service);
 
     // Bind first hyper HTTP server.
     let socket_addr =
@@ -86,7 +86,8 @@ async fn main() -> ExitCode {
             return ExitCode::from(exitcode::NOPERM as u8);
         })
         .expect("failed to bind first Hyper server")
-        .serve(service_builder.clone())
+        // .serve(service.clone())
+        .serve(service)
         .with_graceful_shutdown({
             let mut shutdown_rx = shutdown_tx.subscribe();
             async move {
@@ -95,37 +96,38 @@ async fn main() -> ExitCode {
             }
         })
         .map_err(|e| ServerError::HyperError(e));
-
-    // Bind second hyper HTTP server.
-    let socket_addr =
-        SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
-    let server_b = Server::try_bind(&socket_addr)
-        .map_err(|e| {
-            error!(
-                "Unable to bind to {addr}: {error}",
-                addr = socket_addr,
-                error = e
-            );
-            // No servers are currently running since no await was called on any
-            // of them yet. Therefore, exiting here is "graceful".
-            return ExitCode::from(exitcode::NOPERM as u8);
-        })
-        .expect("failed to bind second Hyper server")
-        .serve(service_builder.clone())
-        .with_graceful_shutdown({
-            let mut shutdown_rx = shutdown_tx.subscribe();
-            async move {
-                shutdown_rx.recv().await.ok();
-                info!("Graceful shutdown initiated on second Hyper server")
-            }
-        })
-        .map_err(|e| ServerError::HyperError(e));
+    /*
+       // Bind second hyper HTTP server.
+       let socket_addr =
+           SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
+       let server_b = Server::try_bind(&socket_addr)
+           .map_err(|e| {
+               error!(
+                   "Unable to bind to {addr}: {error}",
+                   addr = socket_addr,
+                   error = e
+               );
+               // No servers are currently running since no await was called on any
+               // of them yet. Therefore, exiting here is "graceful".
+               return ExitCode::from(exitcode::NOPERM as u8);
+           })
+           .expect("failed to bind second Hyper server")
+           .serve(service.clone())
+           .with_graceful_shutdown({
+               let mut shutdown_rx = shutdown_tx.subscribe();
+               async move {
+                   shutdown_rx.recv().await.ok();
+                   info!("Graceful shutdown initiated on second Hyper server")
+               }
+           })
+           .map_err(|e| ServerError::HyperError(e));
+    */
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
     futures.spawn(server_a);
-    futures.spawn(server_b);
-    futures.spawn(grpc);
+    // futures.spawn(server_b);
+    // futures.spawn(grpc);
 
     // Wait for all servers to stop.
     info!("Starting servers");
