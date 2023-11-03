@@ -1,4 +1,5 @@
 use axum::Router;
+use futures::TryFutureExt;
 use hyper::Server;
 use log::{error, info, warn};
 use std::net::SocketAddr;
@@ -7,6 +8,31 @@ use std::str::FromStr;
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 use tower::ServiceBuilder;
+
+mod proto {
+    tonic::include_proto!("example");
+
+    pub(crate) const FILE_DESCRIPTOR_SET: &[u8] =
+        tonic::include_file_descriptor_set!("example_descriptor");
+}
+
+#[derive(Default)]
+pub struct MyGrpcService {}
+
+#[tonic::async_trait]
+impl proto::your_service_server::YourService for MyGrpcService {
+    async fn your_method(
+        &self,
+        request: tonic::Request<proto::YourRequest>,
+    ) -> Result<tonic::Response<proto::YourResponse>, tonic::Status> {
+        info!("Handling gRPC request from {:?}", request.remote_addr());
+
+        let reply = proto::YourResponse {
+            reply: format!("Hello {}!", request.into_inner().message),
+        };
+        Ok(tonic::Response::new(reply))
+    }
+}
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -19,6 +45,24 @@ async fn main() -> ExitCode {
     // Provide a signal that can be used to shut down the server.
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
     register_shutdown_handler(shutdown_tx.clone());
+
+    // Build the gRPC service.
+    let grpc_service = MyGrpcService::default();
+
+    // Build the gRPC reflections service
+    let grpc_reflection_service = tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(proto::FILE_DESCRIPTOR_SET)
+        .build()
+        .unwrap();
+
+    let grpc_addr = "127.0.0.1:50052".parse().unwrap();
+    let grpc = tonic::transport::Server::builder()
+        .add_service(grpc_reflection_service)
+        .add_service(proto::your_service_server::YourServiceServer::new(
+            grpc_service,
+        ))
+        .serve(grpc_addr)
+        .map_err(|e| ServerError::TonicError(e));
 
     // Build an Axum router.
     let app = Router::new().route("/", axum::routing::get(root_handler));
@@ -49,7 +93,8 @@ async fn main() -> ExitCode {
                 shutdown_rx.recv().await.ok();
                 info!("Graceful shutdown initiated on first Hyper server")
             }
-        });
+        })
+        .map_err(|e| ServerError::HyperError(e));
 
     // Bind second hyper HTTP server.
     let socket_addr =
@@ -73,12 +118,14 @@ async fn main() -> ExitCode {
                 shutdown_rx.recv().await.ok();
                 info!("Graceful shutdown initiated on second Hyper server")
             }
-        });
+        })
+        .map_err(|e| ServerError::HyperError(e));
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
     futures.spawn(server_a);
     futures.spawn(server_b);
+    futures.spawn(grpc);
 
     // Wait for all servers to stop.
     info!("Starting servers");
@@ -146,4 +193,12 @@ where
         LoggingStyle::Compact => formatter.init(),
         LoggingStyle::Json => formatter.json().init(),
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ServerError {
+    #[error(transparent)]
+    HyperError(#[from] hyper::Error),
+    #[error(transparent)]
+    TonicError(#[from] tonic::transport::Error),
 }
