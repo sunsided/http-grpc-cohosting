@@ -11,6 +11,7 @@ pub fn hybrid<Axum, Grpc>(make_web: Axum, grpc: Grpc) -> HybridMakeService<Axum,
     HybridMakeService { make_web, grpc }
 }
 
+#[derive(Clone)]
 pub struct HybridMakeService<Axum, Grpc> {
     make_web: Axum,
     grpc: Grpc,

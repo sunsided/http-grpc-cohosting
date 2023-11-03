@@ -86,8 +86,7 @@ async fn main() -> ExitCode {
             return ExitCode::from(exitcode::NOPERM as u8);
         })
         .expect("failed to bind first Hyper server")
-        // .serve(service.clone())
-        .serve(service)
+        .serve(service.clone())
         .with_graceful_shutdown({
             let mut shutdown_rx = shutdown_tx.subscribe();
             async move {
@@ -96,38 +95,36 @@ async fn main() -> ExitCode {
             }
         })
         .map_err(|e| ServerError::HyperError(e));
-    /*
-       // Bind second hyper HTTP server.
-       let socket_addr =
-           SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
-       let server_b = Server::try_bind(&socket_addr)
-           .map_err(|e| {
-               error!(
-                   "Unable to bind to {addr}: {error}",
-                   addr = socket_addr,
-                   error = e
-               );
-               // No servers are currently running since no await was called on any
-               // of them yet. Therefore, exiting here is "graceful".
-               return ExitCode::from(exitcode::NOPERM as u8);
-           })
-           .expect("failed to bind second Hyper server")
-           .serve(service.clone())
-           .with_graceful_shutdown({
-               let mut shutdown_rx = shutdown_tx.subscribe();
-               async move {
-                   shutdown_rx.recv().await.ok();
-                   info!("Graceful shutdown initiated on second Hyper server")
-               }
-           })
-           .map_err(|e| ServerError::HyperError(e));
-    */
+
+    // Bind second hyper HTTP server.
+    let socket_addr =
+        SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
+    let server_b = Server::try_bind(&socket_addr)
+        .map_err(|e| {
+            error!(
+                "Unable to bind to {addr}: {error}",
+                addr = socket_addr,
+                error = e
+            );
+            // No servers are currently running since no await was called on any
+            // of them yet. Therefore, exiting here is "graceful".
+            return ExitCode::from(exitcode::NOPERM as u8);
+        })
+        .expect("failed to bind second Hyper server")
+        .serve(service.clone())
+        .with_graceful_shutdown({
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            async move {
+                shutdown_rx.recv().await.ok();
+                info!("Graceful shutdown initiated on second Hyper server")
+            }
+        })
+        .map_err(|e| ServerError::HyperError(e));
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
     futures.spawn(server_a);
-    // futures.spawn(server_b);
-    // futures.spawn(grpc);
+    futures.spawn(server_b);
 
     // Wait for all servers to stop.
     info!("Starting servers");
