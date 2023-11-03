@@ -396,6 +396,7 @@ dependencies = [
  "ctrlc",
  "dotenvy",
  "exitcode",
+ "futures-util",
  "hyper",
  "log",
  "pin-project",

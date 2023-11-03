@@ -1,10 +1,10 @@
 mod certs;
 mod hybrid;
 
-use crate::certs::Acceptor;
 use crate::hybrid::{hybrid, HybridMakeService};
 use axum::routing::IntoMakeService;
 use axum::Router;
+use futures_util::StreamExt;
 use hyper::server::conn::AddrIncoming;
 use hyper::Server;
 use log::{error, info, warn};
@@ -91,10 +91,7 @@ async fn main() -> ExitCode {
     // Bind third hyper HTTP server (using TLS).
     let socket_addr =
         SocketAddr::from_str("127.0.0.1:36850").expect("failed to parse socket address");
-    let listener = tls_listener::builder(certs::tls_acceptor())
-        .max_handshakes(10)
-        .listen(AddrIncoming::bind(&socket_addr).unwrap());
-    let server_c = create_hyper_server_tls(service, listener, &shutdown_tx);
+    let server_c = create_hyper_server_tls(service, socket_addr, &shutdown_tx);
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
@@ -144,23 +141,47 @@ fn create_hyper_server(
             // of them yet. Therefore, exiting here is "graceful".
             ExitCode::from(exitcode::NOPERM as u8)
         })
-        .expect("failed to bind first Hyper server") // TODO: Actually return error
+        .expect("failed to bind Hyper server") // TODO: Actually return error
         .serve(service)
         .with_graceful_shutdown({
             let mut shutdown_rx = shutdown_tx.subscribe();
             async move {
                 shutdown_rx.recv().await.ok();
-                info!("Graceful shutdown initiated on first Hyper server")
+                info!("Graceful shutdown initiated on Hyper server")
             }
         })
 }
 
 fn create_hyper_server_tls(
     service: HybridMakeService<IntoMakeService<Router>, Routes>,
-    listener: TlsListener<AddrIncoming, Acceptor>,
+    socket_addr: SocketAddr,
     shutdown_tx: &Sender<()>,
 ) -> impl Future<Output = Result<(), hyper::Error>> + Send {
-    Server::builder(listener)
+    let listener = AddrIncoming::bind(&socket_addr)
+        .map_err(|e| {
+            error!(
+                "Unable to bind to {addr}: {error}",
+                addr = socket_addr,
+                error = e
+            );
+            // No servers are currently running since no await was called on any
+            // of them yet. Therefore, exiting here is "graceful".
+            ExitCode::from(exitcode::NOPERM as u8)
+        })
+        .expect("failed to bind Hyper server"); // TODO: Actually return error
+
+    let incoming = TlsListener::new(certs::tls_acceptor(), listener)
+        .connections()
+        .filter(|conn| {
+            if let Err(err) = conn {
+                error!("Error: {:?}", err);
+                std::future::ready(false)
+            } else {
+                std::future::ready(true)
+            }
+        });
+
+    Server::builder(hyper::server::accept::from_stream(incoming))
         .serve(service)
         .with_graceful_shutdown({
             let mut shutdown_rx = shutdown_tx.subscribe();
