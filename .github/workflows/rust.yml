@@ -1,0 +1,51 @@
+name: Rust
+
+on:
+  push:
+    branches:
+      - main
+      - feature/*
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+        toolchain:
+          - 1.73.0
+          - stable
+          - nightly
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          profile: minimal
+          override: true
+          components: rustfmt, clippy
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ matrix.toolchain }}
+      - name: Build
+        run: cargo build
+      - name: Run tests
+        run: cargo test
+      - name: clippy
+        run: cargo clippy -- --deny "warnings"
+      - name: fmt
+        run: cargo fmt -- --check

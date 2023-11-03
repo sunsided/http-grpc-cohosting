@@ -1,5 +1,5 @@
 ### Ensure basic hosting works
-GET http://{{host}}:{{port}}/
+GET {{endpoint}}/
 
 > {%
     client.test("Request executed successfully", function() {
