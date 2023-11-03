@@ -142,9 +142,9 @@ fn create_hyper_server(
             );
             // No servers are currently running since no await was called on any
             // of them yet. Therefore, exiting here is "graceful".
-            return ExitCode::from(exitcode::NOPERM as u8);
+            ExitCode::from(exitcode::NOPERM as u8)
         })
-        .expect("failed to bind first Hyper server")
+        .expect("failed to bind first Hyper server") // TODO: Actually return error
         .serve(service)
         .with_graceful_shutdown({
             let mut shutdown_rx = shutdown_tx.subscribe();
