@@ -1,15 +1,18 @@
 mod hybrid;
 
-use crate::hybrid::hybrid;
+use crate::hybrid::{hybrid, HybridMakeService};
+use axum::routing::IntoMakeService;
 use axum::Router;
-use futures::TryFutureExt;
 use hyper::Server;
 use log::{error, info, warn};
+use std::future::Future;
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::str::FromStr;
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::Sender;
 use tokio::task::JoinSet;
+use tonic::transport::server::Routes;
 
 mod proto {
     tonic::include_proto!("example");
@@ -74,52 +77,12 @@ async fn main() -> ExitCode {
     // Bind first hyper HTTP server.
     let socket_addr =
         SocketAddr::from_str("127.0.0.1:36849").expect("failed to parse socket address");
-    let server_a = Server::try_bind(&socket_addr)
-        .map_err(|e| {
-            error!(
-                "Unable to bind to {addr}: {error}",
-                addr = socket_addr,
-                error = e
-            );
-            // No servers are currently running since no await was called on any
-            // of them yet. Therefore, exiting here is "graceful".
-            return ExitCode::from(exitcode::NOPERM as u8);
-        })
-        .expect("failed to bind first Hyper server")
-        .serve(service.clone())
-        .with_graceful_shutdown({
-            let mut shutdown_rx = shutdown_tx.subscribe();
-            async move {
-                shutdown_rx.recv().await.ok();
-                info!("Graceful shutdown initiated on first Hyper server")
-            }
-        })
-        .map_err(|e| ServerError::HyperError(e));
+    let server_a = create_hyper_server(service.clone(), socket_addr, &shutdown_tx);
 
     // Bind second hyper HTTP server.
     let socket_addr =
         SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
-    let server_b = Server::try_bind(&socket_addr)
-        .map_err(|e| {
-            error!(
-                "Unable to bind to {addr}: {error}",
-                addr = socket_addr,
-                error = e
-            );
-            // No servers are currently running since no await was called on any
-            // of them yet. Therefore, exiting here is "graceful".
-            return ExitCode::from(exitcode::NOPERM as u8);
-        })
-        .expect("failed to bind second Hyper server")
-        .serve(service.clone())
-        .with_graceful_shutdown({
-            let mut shutdown_rx = shutdown_tx.subscribe();
-            async move {
-                shutdown_rx.recv().await.ok();
-                info!("Graceful shutdown initiated on second Hyper server")
-            }
-        })
-        .map_err(|e| ServerError::HyperError(e));
+    let server_b = create_hyper_server(service, socket_addr, &shutdown_tx);
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
@@ -150,6 +113,33 @@ async fn main() -> ExitCode {
 
     info!("Shutting down application");
     ExitCode::SUCCESS
+}
+
+fn create_hyper_server(
+    service: HybridMakeService<IntoMakeService<Router>, Routes>,
+    socket_addr: SocketAddr,
+    shutdown_tx: &Sender<()>,
+) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+    Server::try_bind(&socket_addr)
+        .map_err(|e| {
+            error!(
+                "Unable to bind to {addr}: {error}",
+                addr = socket_addr,
+                error = e
+            );
+            // No servers are currently running since no await was called on any
+            // of them yet. Therefore, exiting here is "graceful".
+            return ExitCode::from(exitcode::NOPERM as u8);
+        })
+        .expect("failed to bind first Hyper server")
+        .serve(service)
+        .with_graceful_shutdown({
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            async move {
+                shutdown_rx.recv().await.ok();
+                info!("Graceful shutdown initiated on first Hyper server")
+            }
+        })
 }
 
 async fn root_handler() -> String {
@@ -192,12 +182,4 @@ where
         LoggingStyle::Compact => formatter.init(),
         LoggingStyle::Json => formatter.json().init(),
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ServerError {
-    #[error(transparent)]
-    HyperError(#[from] hyper::Error),
-    #[error(transparent)]
-    TonicError(#[from] tonic::transport::Error),
 }
