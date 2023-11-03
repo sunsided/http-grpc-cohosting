@@ -1,4 +1,4 @@
-# gRPC and HTTP/1.1 co-hosting
+# Tonic gRPC and Axum HTTP/1.1+2 co-hosting in Rust
 
 An attempt at hosting HTTP/1.1, HTTP/2 and gRPC on the same port(s).
 
