@@ -1,0 +1,23 @@
+### Ensure basic hosting works
+GET http://{{host}}:{{port}}/
+
+> {%
+    client.test("Request executed successfully", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+
+    client.test("Response content-type is plain text", function() {
+        const type = response.contentType.mimeType;
+        client.assert(type === "text/plain", "Expected 'text/plain' but received '" + type + "'");
+    });
+
+    client.test("Request executed successfully", function() {
+        let contentLength = response.headers.valuesOf("content-length")[0];
+        client.assert(contentLength == 2, "The content-length header is expected to be 2");
+    });
+
+    client.test("Response body is correct", function() {
+        const body = response.body;
+        client.assert(body === "ok", "The body should contain the text 'ok'");
+    });
+%}
