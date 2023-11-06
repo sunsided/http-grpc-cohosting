@@ -28,7 +28,7 @@ This project uses:
 ```shell
 curl -v http://127.0.0.1:36849/
 curl -v http://127.1.0.1:36849/
-curl --http2-prior-knowledge --insecure -vv https://127.0.0.1:36849/
+curl --http2-prior-knowledge --insecure -vv http://127.0.0.1:36849/
 ```
 
 ### TLS with ALPN

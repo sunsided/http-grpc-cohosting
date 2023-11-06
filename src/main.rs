@@ -1,7 +1,7 @@
 mod certs;
 mod hybrid;
 
-use crate::hybrid::{hybrid, HybridMakeService};
+use crate::hybrid::HybridMakeService;
 use axum::routing::IntoMakeService;
 use axum::Router;
 use futures_util::StreamExt;
@@ -60,7 +60,7 @@ async fn main() -> ExitCode {
     let axum_make_svc = build_web_service();
 
     // Combine web and gRPC into a hybrid service.
-    let service = hybrid(axum_make_svc, grpc_service);
+    let service = HybridMakeService::new(axum_make_svc, grpc_service);
 
     // Bind first hyper HTTP server.
     let socket_addr =
@@ -176,16 +176,10 @@ fn create_hyper_server_tls(
         })
         .expect("failed to bind Hyper server"); // TODO: Actually return error
 
+    // Create a TLS listener and filter out all invalid connections.
     let incoming = TlsListener::new(certs::tls_acceptor(), listener)
         .connections()
-        .filter(|conn| {
-            if let Err(err) = conn {
-                error!("Error: {:?}", err);
-                std::future::ready(false)
-            } else {
-                std::future::ready(true)
-            }
-        });
+        .filter(handle_tls_connect_error);
 
     Server::builder(hyper::server::accept::from_stream(incoming))
         .serve(service)
@@ -237,5 +231,19 @@ where
     match style.borrow() {
         LoggingStyle::Compact => formatter.init(),
         LoggingStyle::Json => formatter.json().init(),
+    }
+}
+
+fn handle_tls_connect_error<AddrStream>(
+    result: &Result<
+        tokio_rustls::server::TlsStream<AddrStream>,
+        tls_listener::Error<std::io::Error, std::io::Error, SocketAddr>,
+    >,
+) -> std::future::Ready<bool> {
+    if let Err(err) = result {
+        error!("Error: {:?}", err);
+        std::future::ready(false)
+    } else {
+        std::future::ready(true)
     }
 }
