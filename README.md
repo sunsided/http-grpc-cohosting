@@ -1,6 +1,6 @@
 # Tonic gRPC and Axum HTTP/1.1+2 co-hosting in Rust
 
-An attempt at hosting HTTP/1.1, HTTP/2 and gRPC on the same port(s).
+A project showcasing how to host HTTP/1.1, HTTP/2 and gRPC on the same port(s) and via Unix Domain Sockets.
 
 Multiple Hyper servers are spawned on different endpoints to showcase the use of binding to different IP addresses
 and ports while reusing the same server components. A Hyper service is used to switch the incoming traffic based on the
