@@ -6,7 +6,7 @@ Multiple Hyper servers are spawned on different endpoints to showcase the use of
 and ports while reusing the same server components. A Hyper service is used to switch the incoming traffic based on the
 `content-type` header and if `application/grpc` is detected, traffic is forwarded to the Tonic server; all other
 cases forward to Axum. This allows for transparent use of HTTP/1.1 and HTTP/2 (prior knowledge), as well
-as ALPN on the TLS-enabled ports.
+as ALPN on the TLS-enabled ports. On Unixoids, Unix Domain Sockets are supported as well. 
 
 This project uses:
 
@@ -70,8 +70,11 @@ grpcurl --insecure --use-reflection -d '{ "message": "World" }' 127.0.0.1:36850 
 
 ### Unix Domain Sockets
 
+For UDS to work with gRPC, the `:authority` header needs to be sent. In `grpcurl`, the `--authority=xyz` flag
+is used for that:
+
 ```shell
-curl -v --unix-socket /tmp/cohosting.sock http://localhost:36849/
+grpcurl --unix --plaintext --use-reflection --authority localhost -d '{ "message": "World" }' /tmp/cohosting.sock example.YourService/YourMethod
 ```
 
 ## Recommended reads

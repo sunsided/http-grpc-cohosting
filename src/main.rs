@@ -1,8 +1,11 @@
 mod certs;
 mod hybrid;
+
+#[cfg(all(unix, feature = "unix-domain-sockets"))]
 mod sockets;
 
 use crate::hybrid::HybridMakeService;
+#[cfg(all(unix, feature = "unix-domain-sockets"))]
 use crate::sockets::UnixDomainSocket;
 use axum::routing::IntoMakeService;
 use axum::Router;
@@ -12,7 +15,6 @@ use hyper::Server;
 use log::{error, info, warn};
 use std::future::Future;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 use tls_listener::TlsListener;
@@ -65,31 +67,34 @@ async fn main() -> ExitCode {
     // Combine web and gRPC into a hybrid service.
     let service = HybridMakeService::new(axum_make_svc, grpc_service);
 
+    // Combine the server futures.
+    let mut futures = JoinSet::new();
+
     // Bind first hyper HTTP server.
     let socket_addr =
         SocketAddr::from_str("127.0.0.1:36849").expect("failed to parse socket address");
     let server_a = create_hyper_server(service.clone(), socket_addr, &shutdown_tx);
+    futures.spawn(server_a);
 
     // Bind second hyper HTTP server.
     let socket_addr =
         SocketAddr::from_str("127.1.0.1:36849").expect("failed to parse socket address");
     let server_b = create_hyper_server(service.clone(), socket_addr, &shutdown_tx);
+    futures.spawn(server_b);
 
     // Bind third hyper HTTP server (using TLS).
     let socket_addr =
         SocketAddr::from_str("127.0.0.1:36850").expect("failed to parse socket address");
     let server_c = create_hyper_server_tls(service.clone(), socket_addr, &shutdown_tx);
+    futures.spawn(server_c);
 
     // Bind fourth server to Unix Domain Socket.
-    let socket_addr = PathBuf::from("/tmp/cohosting.sock");
-    let server_d = create_hyper_server_uds(service, socket_addr, &shutdown_tx);
-
-    // Combine the server futures.
-    let mut futures = JoinSet::new();
-    futures.spawn(server_a);
-    futures.spawn(server_b);
-    futures.spawn(server_c);
-    futures.spawn(server_d);
+    #[cfg(all(unix, feature = "unix-domain-sockets"))]
+    {
+        let socket_addr = std::path::PathBuf::from("/tmp/cohosting.sock");
+        let server_d = create_hyper_server_uds(service, socket_addr, &shutdown_tx);
+        futures.spawn(server_d);
+    }
 
     // Wait for all servers to stop.
     info!("Starting servers");
@@ -167,9 +172,10 @@ fn create_hyper_server(
         })
 }
 
+#[cfg(all(unix, feature = "unix-domain-sockets"))]
 fn create_hyper_server_uds(
     service: HybridMakeService<IntoMakeService<Router>, Routes>,
-    socket_path: PathBuf,
+    socket_path: std::path::PathBuf,
     shutdown_tx: &Sender<()>,
 ) -> impl Future<Output = Result<(), hyper::Error>> + Send {
     info!("Binding server to {}", socket_path.display());
