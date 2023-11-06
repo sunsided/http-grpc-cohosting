@@ -1,7 +1,9 @@
 mod certs;
 mod hybrid;
+mod sockets;
 
 use crate::hybrid::HybridMakeService;
+use crate::sockets::UnixDomainSocket;
 use axum::routing::IntoMakeService;
 use axum::Router;
 use futures_util::StreamExt;
@@ -10,6 +12,7 @@ use hyper::Server;
 use log::{error, info, warn};
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 use tls_listener::TlsListener;
@@ -75,13 +78,18 @@ async fn main() -> ExitCode {
     // Bind third hyper HTTP server (using TLS).
     let socket_addr =
         SocketAddr::from_str("127.0.0.1:36850").expect("failed to parse socket address");
-    let server_c = create_hyper_server_tls(service, socket_addr, &shutdown_tx);
+    let server_c = create_hyper_server_tls(service.clone(), socket_addr, &shutdown_tx);
+
+    // Bind fourth server to Unix Domain Socket.
+    let socket_addr = PathBuf::from("/tmp/cohosting.sock");
+    let server_d = create_hyper_server_uds(service, socket_addr, &shutdown_tx);
 
     // Combine the server futures.
     let mut futures = JoinSet::new();
     futures.spawn(server_a);
     futures.spawn(server_b);
     futures.spawn(server_c);
+    futures.spawn(server_d);
 
     // Wait for all servers to stop.
     info!("Starting servers");
@@ -136,6 +144,7 @@ fn create_hyper_server(
     socket_addr: SocketAddr,
     shutdown_tx: &Sender<()>,
 ) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+    info!("Binding server to {}", socket_addr);
     Server::try_bind(&socket_addr)
         .map_err(|e| {
             error!(
@@ -158,11 +167,41 @@ fn create_hyper_server(
         })
 }
 
+fn create_hyper_server_uds(
+    service: HybridMakeService<IntoMakeService<Router>, Routes>,
+    socket_path: PathBuf,
+    shutdown_tx: &Sender<()>,
+) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+    info!("Binding server to {}", socket_path.display());
+
+    let incoming = match UnixDomainSocket::new(&socket_path) {
+        Ok(listener) => listener,
+        Err(e) => {
+            error!(
+                "Failed to bind to socket {addr}: {error}",
+                addr = socket_path.display(),
+                error = e
+            );
+            panic!("{}", e);
+        }
+    };
+    Server::builder(incoming)
+        .serve(service)
+        .with_graceful_shutdown({
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            async move {
+                shutdown_rx.recv().await.ok();
+                info!("Graceful shutdown initiated on Hyper server")
+            }
+        })
+}
+
 fn create_hyper_server_tls(
     service: HybridMakeService<IntoMakeService<Router>, Routes>,
     socket_addr: SocketAddr,
     shutdown_tx: &Sender<()>,
 ) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+    info!("Binding server to {}", socket_addr);
     let listener = AddrIncoming::bind(&socket_addr)
         .map_err(|e| {
             error!(

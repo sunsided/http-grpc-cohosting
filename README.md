@@ -31,6 +31,12 @@ curl -v http://127.1.0.1:36849/
 curl --http2-prior-knowledge --insecure -vv http://127.0.0.1:36849/
 ```
 
+### Unix Domain Sockets
+
+```shell
+curl -v --unix-socket /tmp/cohosting.sock http://localhost:36849/
+```
+
 ### TLS with ALPN
 
 ```shell
@@ -60,6 +66,12 @@ Send a test request:
 ```shell
 grpcurl --plaintext --use-reflection -d '{ "message": "World" }' 127.0.0.1:36849 example.YourService/YourMethod
 grpcurl --insecure --use-reflection -d '{ "message": "World" }' 127.0.0.1:36850 example.YourService/YourMethod
+```
+
+### Unix Domain Sockets
+
+```shell
+curl -v --unix-socket /tmp/cohosting.sock http://localhost:36849/
 ```
 
 ## Recommended reads
