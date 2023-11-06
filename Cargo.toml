@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 
+[features]
+default = ["unix-domain-sockets"]
+unix-domain-sockets = ["hyper/socket2"]
+
 [dependencies]
 axum = { version = "0.6.20", features = ["http2"] }
 ctrlc = "3.4.1"

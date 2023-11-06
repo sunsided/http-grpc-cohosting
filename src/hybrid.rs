@@ -165,7 +165,7 @@ fn is_grpc_request<Body>(req: &Request<Body>) -> bool {
     }
 
     // The content-type header needs to start with `application/grpc`
-    const EXPECTED: &'static [u8] = b"application/grpc";
+    const EXPECTED: &[u8] = b"application/grpc";
     if let Some(content_type) = req
         .headers()
         .get(hyper::header::CONTENT_TYPE)
