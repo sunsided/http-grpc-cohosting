@@ -148,7 +148,7 @@ fn create_hyper_server(
     service: HybridMakeService<IntoMakeService<Router>, Routes>,
     socket_addr: SocketAddr,
     shutdown_tx: &Sender<()>,
-) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+) -> impl Future<Output = Result<(), hyper::Error>> + Send + use<> {
     info!("Binding server to {}", socket_addr);
     Server::try_bind(&socket_addr)
         .map_err(|e| {
@@ -177,7 +177,7 @@ fn create_hyper_server_uds(
     service: HybridMakeService<IntoMakeService<Router>, Routes>,
     socket_path: std::path::PathBuf,
     shutdown_tx: &Sender<()>,
-) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+) -> impl Future<Output = Result<(), hyper::Error>> + Send + use<> {
     info!("Binding server to {}", socket_path.display());
 
     let incoming = match UnixDomainSocket::new(&socket_path) {
@@ -206,7 +206,7 @@ fn create_hyper_server_tls(
     service: HybridMakeService<IntoMakeService<Router>, Routes>,
     socket_addr: SocketAddr,
     shutdown_tx: &Sender<()>,
-) -> impl Future<Output = Result<(), hyper::Error>> + Send {
+) -> impl Future<Output = Result<(), hyper::Error>> + Send + use<> {
     info!("Binding server to {}", socket_addr);
     let listener = AddrIncoming::bind(&socket_addr)
         .map_err(|e| {
